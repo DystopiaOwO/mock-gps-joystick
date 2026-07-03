@@ -215,6 +215,7 @@ object MovementMath {
         check(next(origin, 90.0, 1.0, 5.0, 1.0).coordinate.latitude < 0.0)
         check(next(origin, 180.0, 1.0, 5.0, 1.0).coordinate.longitude < 0.0)
         check(next(origin, 0.0, 0.01, 5.0, 1.0).coordinate == origin)
+        check(next(origin, 0.0, 1.0, 5.0, 0.12).coordinate != origin)
         check(next(Coordinate(0.0, 179.999999), 0.0, 1.0, 10.0, 2.0).coordinate.longitude in -180.0..180.0)
     }
 

@@ -63,19 +63,7 @@ class MockLocationService : Service() {
         override fun run() {
             if (shuttingDown || !RuntimeState.snapshot().serviceRunning) return
 
-            val nowNanos = SystemClock.elapsedRealtimeNanos()
-            // ponytail: cap scheduler stalls; route playback can replace this if exact catch-up is ever needed.
-            val deltaSeconds = ((nowNanos - lastTickNanos) / 1_000_000_000.0).coerceIn(0.0, 1.0)
-            lastTickNanos = nowNanos
-            val snapshot = RuntimeState.snapshot()
-            val result = MovementMath.next(
-                current = snapshot.currentCoordinate,
-                screenAngleDegrees = snapshot.joystickAngle,
-                strength = snapshot.joystickStrength,
-                speedKmh = snapshot.speedKmh,
-                deltaSeconds = deltaSeconds,
-            )
-            if (!setTestProviderLocation(result)) {
+            if (!advanceAndPushLocation()) {
                 shutdown(stopSelfAfter = true)
                 return
             }
@@ -182,6 +170,32 @@ class MockLocationService : Service() {
         lastNotificationMillis = 0L
         mainHandler.removeCallbacks(updateRunnable)
         mainHandler.postDelayed(updateRunnable, UPDATE_INTERVAL_MS)
+    }
+
+    private fun advanceAndPushLocation(): Boolean {
+        val nowNanos = SystemClock.elapsedRealtimeNanos()
+        // ponytail: cap scheduler stalls; route playback can replace this if exact catch-up is ever needed.
+        val deltaSeconds = ((nowNanos - lastTickNanos) / 1_000_000_000.0).coerceIn(0.0, 1.0)
+        lastTickNanos = nowNanos
+        val snapshot = RuntimeState.snapshot()
+        return setTestProviderLocation(
+            MovementMath.next(
+                current = snapshot.currentCoordinate,
+                screenAngleDegrees = snapshot.joystickAngle,
+                strength = snapshot.joystickStrength,
+                speedKmh = snapshot.speedKmh,
+                deltaSeconds = deltaSeconds,
+            ),
+        )
+    }
+
+    private fun handleJoystick(angle: Double, strength: Double) {
+        val previousStrength = RuntimeState.snapshot().joystickStrength
+        if (strength == 0.0 && previousStrength > 0.0 && !advanceAndPushLocation()) {
+            shutdown(stopSelfAfter = true)
+            return
+        }
+        RuntimeState.setJoystick(angle, strength)
     }
 
     private fun addTestProvider(): Boolean {
@@ -307,7 +321,7 @@ class MockLocationService : Service() {
         val view = JoystickOverlayView(
             context = this,
             initialSpeedKmh = RuntimeState.snapshot().speedKmh,
-            onJoystick = RuntimeState::setJoystick,
+            onJoystick = ::handleJoystick,
             onDrag = ::moveOverlay,
             onSpeedChange = ::cycleSpeed,
             onSavedLocations = ::showSavedLocations,
