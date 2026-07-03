@@ -176,7 +176,7 @@ object MovementMath {
         speedKmh: Double,
         deltaSeconds: Double,
     ): MovementResult {
-        val effectiveStrength = strength.coerceIn(0.0, 1.0).takeIf { it >= DEAD_ZONE } ?: 0.0
+        val effectiveStrength = if (strength >= DEAD_ZONE) 1.0 else 0.0
         val speedMps = speedKmh / 3.6 * effectiveStrength
         val bearing = normalizeDegrees(screenAngleDegrees + 90.0)
         val distance = speedMps * deltaSeconds.coerceAtLeast(0.0)
@@ -215,6 +215,7 @@ object MovementMath {
         check(next(origin, 90.0, 1.0, 5.0, 1.0).coordinate.latitude < 0.0)
         check(next(origin, 180.0, 1.0, 5.0, 1.0).coordinate.longitude < 0.0)
         check(next(origin, 0.0, 0.01, 5.0, 1.0).coordinate == origin)
+        check(next(origin, 0.0, 0.5, 5.0, 1.0).actualSpeedMps == next(origin, 0.0, 1.0, 5.0, 1.0).actualSpeedMps)
         check(next(origin, 0.0, 1.0, 5.0, 0.12).coordinate != origin)
         check(next(Coordinate(0.0, 179.999999), 0.0, 1.0, 10.0, 2.0).coordinate.longitude in -180.0..180.0)
     }
