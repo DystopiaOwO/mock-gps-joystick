@@ -1,6 +1,7 @@
 package tw.dystopia.mockgpsjoystick
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -19,6 +20,7 @@ import android.graphics.drawable.GradientDrawable
 import android.location.Location
 import android.location.LocationManager
 import android.location.provider.ProviderProperties
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -36,8 +38,16 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.webkit.CookieManager
+import android.webkit.JavascriptInterface
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayInputStream
+import java.io.IOException
 import java.util.Locale
 import kotlin.math.atan2
 import kotlin.math.hypot
@@ -55,6 +65,8 @@ class MockLocationService : Service() {
     private var overlayParams: WindowManager.LayoutParams? = null
     private var savedPanelAdded = false
     private var savedPanelView: View? = null
+    private var mapPanelAdded = false
+    private var mapPanelView: FloatingMapPanel? = null
     private var shuttingDown = false
     private var lastTickNanos = 0L
     private var lastNotificationMillis = 0L
@@ -324,6 +336,7 @@ class MockLocationService : Service() {
             onJoystick = ::handleJoystick,
             onDrag = ::moveOverlay,
             onSpeedChange = ::cycleSpeed,
+            onMap = ::showFloatingMap,
             onSavedLocations = ::showSavedLocations,
             onCollapsedChanged = ::setOverlayCollapsed,
         )
@@ -438,6 +451,61 @@ class MockLocationService : Service() {
         }
     }
 
+    private fun showFloatingMap() = runOnMain {
+        if (mapPanelAdded || shuttingDown) return@runOnMain
+        removeSavedLocations()
+        val view = FloatingMapPanel(
+            context = this,
+            initialCoordinate = RuntimeState.snapshot().currentCoordinate,
+            onClose = ::removeFloatingMap,
+            onMove = { coordinate ->
+                if (RuntimeState.jumpTo(coordinate) && advanceAndPushLocation()) {
+                    removeFloatingMap()
+                } else {
+                    shutdown(stopSelfAfter = true)
+                }
+            },
+        )
+        val params = WindowManager.LayoutParams(
+            (screenWidth() - dp(24)).coerceAtLeast(dp(280)),
+            dp(560).coerceAtMost((screenHeight() - dp(48)).coerceAtLeast(dp(360))),
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            PixelFormat.TRANSLUCENT,
+        ).apply {
+            gravity = Gravity.CENTER
+        }
+        try {
+            windowManager.addView(view, params)
+            mapPanelView = view
+            mapPanelAdded = true
+            overlayView?.visibility = View.GONE
+        } catch (error: RuntimeException) {
+            view.destroy()
+            RuntimeState.recordErrorIfEmpty("懸浮地圖建立失敗：${error.message ?: error.javaClass.simpleName}")
+        }
+    }
+
+    private fun removeFloatingMap() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post(::removeFloatingMap)
+            return
+        }
+        val view = mapPanelView
+        try {
+            if (mapPanelAdded && view?.isAttachedToWindow == true) {
+                windowManager.removeView(view)
+            }
+        } catch (error: RuntimeException) {
+            RuntimeState.recordErrorIfEmpty("懸浮地圖移除失敗：${error.message ?: error.javaClass.simpleName}")
+        } finally {
+            view?.destroy()
+            mapPanelAdded = false
+            mapPanelView = null
+            if (overlayAdded) overlayView?.visibility = View.VISIBLE
+        }
+    }
+
     private fun refreshSavedLocations() {
         removeSavedLocations()
         mainHandler.post(::showSavedLocations)
@@ -526,6 +594,7 @@ class MockLocationService : Service() {
         RuntimeState.setJoystick(-90.0, 0.0)
         disableTestProvider()
         removeTestProvider()
+        removeFloatingMap()
         removeSavedLocations()
         removeOverlay()
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -851,16 +920,219 @@ private class SavedLocationsPanel(
         String.format(Locale.US, "%.6f, %.6f", coordinate.latitude, coordinate.longitude)
 }
 
+@SuppressLint("ViewConstructor", "SetJavaScriptEnabled")
+private class FloatingMapPanel(
+    context: android.content.Context,
+    initialCoordinate: Coordinate,
+    private val onClose: () -> Unit,
+    private val onMove: (Coordinate) -> Unit,
+) : LinearLayout(context) {
+    private val density = resources.displayMetrics.density
+    private val coordinateText = TextView(context)
+    private val webView = WebView(context)
+    private var selected = initialCoordinate
+    private var pageReady = false
+
+    init {
+        orientation = VERTICAL
+        setPadding(dp(8), dp(8), dp(8), dp(8))
+        background = panelBackground()
+        isFocusableInTouchMode = true
+        requestFocus()
+
+        val header = LinearLayout(context).apply {
+            orientation = HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        header.addView(TextView(context).apply {
+            text = "地圖傳送"
+            setTextColor(Color.rgb(20, 22, 26))
+            textSize = 18f
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(dp(8), 0, 0, 0)
+        }, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
+        header.addView(panelButton("關閉", onClose))
+        header.addView(
+            panelButton("傳送") { onMove(selected) },
+            LayoutParams(dp(72), dp(48)).apply { marginStart = dp(6) },
+        )
+        addView(header, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+
+        addView(coordinateText.apply {
+            setTextColor(Color.rgb(0, 47, 167))
+            textSize = 15f
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(dp(8), dp(4), dp(8), dp(6))
+        }, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        updateCoordinateText()
+
+        CookieManager.getInstance().setAcceptCookie(false)
+        CookieManager.getInstance().setAcceptThirdPartyCookies(webView, false)
+        webView.setBackgroundColor(Color.rgb(247, 247, 248))
+        webView.settings.apply {
+            javaScriptEnabled = true
+            domStorageEnabled = false
+            databaseEnabled = false
+            setGeolocationEnabled(false)
+            allowFileAccess = false
+            allowContentAccess = false
+            blockNetworkLoads = false
+            cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
+            mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
+            userAgentString = "$userAgentString MockGpsJoystick/0.2.0 (family-use; tw.dystopia.mockgpsjoystick)"
+            safeBrowsingEnabled = false
+        }
+        webView.addJavascriptInterface(MapBridge(), "AndroidMap")
+        webView.webViewClient = object : WebViewClient() {
+            override fun shouldInterceptRequest(
+                view: WebView?,
+                request: WebResourceRequest?,
+            ): WebResourceResponse? {
+                val uri = request?.url ?: return null
+                if (uri.scheme == "https" && uri.host == LOCAL_ASSET_HOST &&
+                    uri.path?.startsWith("/map/") == true
+                ) {
+                    return localAssetResponse(uri)
+                }
+                if (request.method == "GET" && isOpenStreetMapTile(uri)) {
+                    return super.shouldInterceptRequest(view, request)
+                }
+                return WebResourceResponse(
+                    "text/plain",
+                    "UTF-8",
+                    ByteArrayInputStream(ByteArray(0)),
+                )
+            }
+
+            override fun shouldOverrideUrlLoading(
+                view: WebView?,
+                request: WebResourceRequest?,
+            ): Boolean {
+                val uri = request?.url ?: return true
+                return uri.scheme != "https" || uri.host != LOCAL_ASSET_HOST
+            }
+
+            override fun onPageFinished(view: WebView?, url: String?) {
+                if (url == MAP_URL) {
+                    pageReady = true
+                    webView.evaluateJavascript(
+                        "window.setInitialLocation(${selected.latitude}, ${selected.longitude});",
+                        null,
+                    )
+                }
+            }
+        }
+        addView(webView, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
+        webView.loadUrl(MAP_URL)
+    }
+
+    fun destroy() {
+        webView.removeJavascriptInterface("AndroidMap")
+        webView.stopLoading()
+        webView.destroy()
+    }
+
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        if (event.keyCode == android.view.KeyEvent.KEYCODE_BACK &&
+            event.action == android.view.KeyEvent.ACTION_UP
+        ) {
+            onClose()
+            return true
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
+    private fun localAssetResponse(uri: Uri): WebResourceResponse? {
+        val assetPath = uri.path?.removePrefix("/") ?: return null
+        val mimeType = when {
+            assetPath.endsWith(".html") -> "text/html"
+            assetPath.endsWith(".css") -> "text/css"
+            assetPath.endsWith(".js") -> "application/javascript"
+            else -> return null
+        }
+        return try {
+            WebResourceResponse(mimeType, "UTF-8", context.assets.open(assetPath))
+        } catch (_: IOException) {
+            null
+        }
+    }
+
+    private fun isOpenStreetMapTile(uri: Uri): Boolean =
+        uri.scheme == "https" &&
+            uri.host == "tile.openstreetmap.org" &&
+            OSM_TILE_PATH.matches(uri.path.orEmpty())
+
+    private fun updateCoordinateText() {
+        coordinateText.text = String.format(
+            Locale.US,
+            "%.6f, %.6f",
+            selected.latitude,
+            selected.longitude,
+        )
+    }
+
+    private inner class MapBridge {
+        @JavascriptInterface
+        fun onCoordinateSelected(latitude: Double, longitude: Double) {
+            if (!latitude.isFinite() || latitude !in -90.0..90.0 ||
+                !longitude.isFinite() || longitude !in -180.0..180.0
+            ) {
+                return
+            }
+            webView.post {
+                selected = Coordinate(latitude, longitude)
+                updateCoordinateText()
+            }
+        }
+
+        @JavascriptInterface
+        fun onTileError() {
+            webView.post { coordinateText.text = "圖磚載入失敗；請確認網路連線。" }
+        }
+    }
+
+    private fun panelButton(label: String, action: () -> Unit): Button =
+        Button(context).apply {
+            text = label
+            setTextColor(Color.rgb(20, 22, 26))
+            textSize = 13f
+            isAllCaps = false
+            background = buttonBackground()
+            setOnClickListener { action() }
+        }
+
+    private fun panelBackground() = GradientDrawable().apply {
+        setColor(Color.rgb(247, 247, 248))
+        cornerRadius = dp(14).toFloat()
+        setStroke(dp(1), Color.rgb(180, 183, 190))
+    }
+
+    private fun buttonBackground() = GradientDrawable().apply {
+        setColor(Color.rgb(233, 235, 240))
+        cornerRadius = dp(5).toFloat()
+        setStroke(dp(1), Color.rgb(180, 183, 190))
+    }
+
+    private fun dp(value: Int): Int = (value * density).roundToInt()
+
+    companion object {
+        private const val LOCAL_ASSET_HOST = "appassets.androidplatform.net"
+        private const val MAP_URL = "https://appassets.androidplatform.net/map/index.html"
+        private val OSM_TILE_PATH = Regex("""/\d+/\d+/\d+\.png""")
+    }
+}
+
 private class JoystickOverlayView(
     context: android.content.Context,
     initialSpeedKmh: Double,
     private val onJoystick: (Double, Double) -> Unit,
     private val onDrag: (Int, Int) -> Unit,
     private val onSpeedChange: () -> Double,
+    private val onMap: () -> Unit,
     private val onSavedLocations: () -> Unit,
     private val onCollapsedChanged: (Boolean) -> Unit,
 ) : View(context) {
-    private enum class TouchMode { NONE, JOYSTICK, DRAG, SPEED, SAVED, COLLAPSE }
+    private enum class TouchMode { NONE, JOYSTICK, DRAG, SPEED, MAP, SAVED, COLLAPSE }
 
     private val density = resources.displayMetrics.density
     private val scaledDensity = resources.displayMetrics.scaledDensity
@@ -928,18 +1200,19 @@ private class JoystickOverlayView(
 
         val handleHeight = handleHeight()
         drawSpeedControl(canvas, handleHeight)
+        drawMapControl(canvas, handleHeight)
         drawSavedControl(canvas, handleHeight)
         canvas.drawLine(
-            width - 22f * density,
+            width - 20f * density,
             handleHeight / 2f,
-            width - 10f * density,
+            width - 8f * density,
             handleHeight / 2f,
             haloPaint,
         )
         canvas.drawLine(
-            width - 22f * density,
+            width - 20f * density,
             handleHeight / 2f,
-            width - 10f * density,
+            width - 8f * density,
             handleHeight / 2f,
             controlPaint,
         )
@@ -969,9 +1242,10 @@ private class JoystickOverlayView(
                 moved = false
                 mode = when {
                     collapsed -> TouchMode.DRAG
-                    event.y <= handleHeight() && event.x >= width - 36f * density -> TouchMode.COLLAPSE
-                    event.y <= handleHeight() && event.x >= width - 68f * density -> TouchMode.SAVED
-                    event.y <= handleHeight() && event.x >= width - 104f * density -> TouchMode.SPEED
+                    event.y <= handleHeight() && event.x >= width - 28f * density -> TouchMode.COLLAPSE
+                    event.y <= handleHeight() && event.x >= width - 56f * density -> TouchMode.SAVED
+                    event.y <= handleHeight() && event.x >= width - 84f * density -> TouchMode.MAP
+                    event.y <= handleHeight() && event.x >= width - 112f * density -> TouchMode.SPEED
                     event.y <= handleHeight() -> TouchMode.DRAG
                     else -> TouchMode.JOYSTICK
                 }
@@ -999,6 +1273,9 @@ private class JoystickOverlayView(
                     TouchMode.SPEED -> if (!moved && event.actionMasked == MotionEvent.ACTION_UP) {
                         speedKmh = onSpeedChange()
                         invalidate()
+                    }
+                    TouchMode.MAP -> if (!moved && event.actionMasked == MotionEvent.ACTION_UP) {
+                        onMap()
                     }
                     TouchMode.SAVED -> if (!moved && event.actionMasked == MotionEvent.ACTION_UP) {
                         onSavedLocations()
@@ -1052,14 +1329,42 @@ private class JoystickOverlayView(
 
     private fun drawSpeedControl(canvas: Canvas, handleHeight: Float) {
         val label = speedKmh.toInt().toString()
-        val x = width - 86f * density
+        val x = width - 98f * density
         val y = handleHeight / 2f - (speedPaint.ascent() + speedPaint.descent()) / 2f
         canvas.drawText(label, x, y, speedHaloPaint)
         canvas.drawText(label, x, y, speedPaint)
     }
 
+    private fun drawMapControl(canvas: Canvas, handleHeight: Float) {
+        val centerX = width - 70f * density
+        val centerY = handleHeight / 2f
+        val pin = android.graphics.Path().apply {
+            moveTo(centerX, centerY + 8f * density)
+            cubicTo(
+                centerX - 10f * density,
+                centerY,
+                centerX - 7f * density,
+                centerY - 8f * density,
+                centerX,
+                centerY - 8f * density,
+            )
+            cubicTo(
+                centerX + 7f * density,
+                centerY - 8f * density,
+                centerX + 10f * density,
+                centerY,
+                centerX,
+                centerY + 8f * density,
+            )
+            close()
+        }
+        canvas.drawPath(pin, haloPaint)
+        canvas.drawPath(pin, controlPaint)
+        canvas.drawCircle(centerX, centerY - 2f * density, 2f * density, controlPaint)
+    }
+
     private fun drawSavedControl(canvas: Canvas, handleHeight: Float) {
-        val centerX = width - 52f * density
+        val centerX = width - 42f * density
         val centerY = handleHeight / 2f
         val bookmark = android.graphics.Path().apply {
             moveTo(centerX - 5f * density, centerY - 7f * density)
