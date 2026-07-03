@@ -734,10 +734,19 @@ private class SavedLocationsPanel(
             savedPlaces.forEach { place ->
                 val row = LinearLayout(context).apply { orientation = HORIZONTAL }
                 row.addView(
-                    panelButton(
-                        "${place.name}\n${formatCoordinate(place.coordinate)}",
-                    ) { onUse(place) },
+                    TextView(context).apply {
+                        text = "${place.name}\n${formatCoordinate(place.coordinate)}"
+                        setTextColor(Color.rgb(20, 22, 26))
+                        textSize = 13f
+                        gravity = Gravity.CENTER_VERTICAL
+                        setPadding(dp(10), 0, dp(10), 0)
+                        background = inputBackground()
+                    },
                     LayoutParams(0, dp(58), 1f),
+                )
+                row.addView(
+                    panelButton("移動") { onUse(place) },
+                    LayoutParams(dp(64), dp(58)).apply { marginStart = dp(8) },
                 )
                 row.addView(
                     panelButton("刪除") { onDelete(place) },
