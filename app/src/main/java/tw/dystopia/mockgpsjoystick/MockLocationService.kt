@@ -699,6 +699,13 @@ private class SavedLocationsPanel(
             setPadding(dp(10), dp(8), dp(10), dp(8))
         }, spacedParams())
 
+        addView(
+            panelButton("移動到輸入座標") {
+                parseCoordinate()?.let { coordinate -> onUse(SavedPlace("", coordinate)) }
+            },
+            spacedParams(),
+        )
+
         val saveRow = LinearLayout(context).apply { orientation = HORIZONTAL }
         saveRow.addView(
             panelButton("儲存輸入座標") {

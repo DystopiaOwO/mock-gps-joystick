@@ -46,15 +46,22 @@ class MapPickerActivity : Activity() {
         )
         coordinateText = findViewById(R.id.selectedCoordinate)
         moveNowCheckbox = findViewById(R.id.mapResetCheckbox)
-        moveNowCheckbox.isEnabled = intent.getBooleanExtra(EXTRA_SERVICE_RUNNING, false)
-        moveNowCheckbox.isChecked = false
+        val serviceRunning = intent.getBooleanExtra(EXTRA_SERVICE_RUNNING, false)
+        moveNowCheckbox.isEnabled = serviceRunning
+        moveNowCheckbox.isChecked = serviceRunning
         updateCoordinateText()
 
         findViewById<Button>(R.id.mapCancelButton).setOnClickListener {
             setResult(RESULT_CANCELED)
             finish()
         }
-        findViewById<Button>(R.id.mapApplyButton).setOnClickListener {
+        val applyButton = findViewById<Button>(R.id.mapApplyButton)
+        fun updateApplyLabel() {
+            applyButton.setText(if (moveNowCheckbox.isChecked) R.string.map_move else R.string.map_apply)
+        }
+        moveNowCheckbox.setOnCheckedChangeListener { _, _ -> updateApplyLabel() }
+        updateApplyLabel()
+        applyButton.setOnClickListener {
             setResult(
                 RESULT_OK,
                 Intent()

@@ -258,13 +258,15 @@ class MainActivity : Activity() {
         latitudeInput.setText(String.format(Locale.US, "%.6f", latitude))
         longitudeInput.setText(String.format(Locale.US, "%.6f", longitude))
         saveSettings(selected, speedValues[speedSpinner.selectedItemPosition])
+        var moved = false
         if (RuntimeState.snapshot().serviceRunning) {
-            RuntimeState.updateStartCoordinate(
-                selected,
-                data.getBooleanExtra(MapPickerActivity.RESULT_MOVE_NOW, false),
-            )
+            if (data.getBooleanExtra(MapPickerActivity.RESULT_MOVE_NOW, false)) {
+                moved = RuntimeState.jumpTo(selected)
+            } else {
+                RuntimeState.updateStartCoordinate(selected, moveCurrent = false)
+            }
         }
-        toast("已套用地圖座標。")
+        toast(if (moved) "已傳送到地圖座標。" else "已套用地圖座標。")
         refreshStatus()
     }
 

@@ -13,7 +13,8 @@
     <string name="map_title">地圖選點</string>
     <string name="map_cancel">取消</string>
     <string name="map_apply">套用</string>
-    <string name="map_reset_now">服務執行中時立即移動到此位置</string>
+    <string name="map_move">傳送</string>
+    <string name="map_reset_now">立即傳送到此位置</string>
     <string name="map_loading">正在載入地圖…</string>
     <string name="request_location">授予定位權限</string>
     <string name="request_notification">授予通知權限</string>
