@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Mock GPS Joystick</string>
+    <string name="title">免 Root Mock GPS 搖桿</string>
+    <string name="notice">僅使用 Android 官方模擬位置功能；不隱藏 Mock 狀態。</string>
+    <string name="permission_section">權限與設定</string>
+    <string name="settings_section">起始位置</string>
+    <string name="runtime_section">執行狀態</string>
+    <string name="latitude">緯度</string>
+    <string name="longitude">經度</string>
+    <string name="speed">速度</string>
+    <string name="open_map">開啟地圖選點</string>
+    <string name="map_title">地圖選點</string>
+    <string name="map_cancel">取消</string>
+    <string name="map_apply">套用</string>
+    <string name="map_reset_now">服務執行中時立即移動到此位置</string>
+    <string name="map_loading">正在載入地圖…</string>
+    <string name="request_location">授予定位權限</string>
+    <string name="request_notification">授予通知權限</string>
+    <string name="open_overlay_settings">開啟懸浮窗權限</string>
+    <string name="open_developer_settings">開啟開發人員選項</string>
+    <string name="open_location_settings">開啟系統定位</string>
+    <string name="refresh_status">重新整理狀態</string>
+    <string name="start">啟動</string>
+    <string name="stop">停止</string>
+    <string name="reset">回到起始點</string>
+    <string name="notification_channel">Mock GPS 執行狀態</string>
+    <string name="notification_running">Mock GPS 執行中</string>
+    <string name="notification_stop">停止</string>
+    <string name="overlay_description">Mock GPS 懸浮搖桿</string>
+</resources>

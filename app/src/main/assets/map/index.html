@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src https://tile.openstreetmap.org data:; connect-src 'none'; font-src 'none'; object-src 'none'; frame-src 'none'">
+    <link rel="stylesheet" href="leaflet.css">
+    <style>
+        html, body, #map {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            background: #f7f7f8;
+            font-family: Arial, Helvetica, sans-serif;
+        }
+
+        .instruction {
+            position: absolute;
+            z-index: 1000;
+            top: 12px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 8px 12px;
+            color: #202124;
+            background: #ffffff;
+            border: 1px solid #cfd1d6;
+            font-size: 13px;
+            white-space: nowrap;
+            pointer-events: none;
+        }
+
+        .selection-marker {
+            width: 24px;
+            height: 24px;
+            box-sizing: border-box;
+            background: #002fa7;
+            border: 4px solid #ffffff;
+            border-radius: 50%;
+            box-shadow: 0 0 0 1px #202124;
+        }
+
+        .selection-marker::before,
+        .selection-marker::after {
+            content: "";
+            position: absolute;
+            background: #002fa7;
+        }
+
+        .selection-marker::before {
+            width: 1px;
+            height: 38px;
+            left: 11px;
+            top: -11px;
+        }
+
+        .selection-marker::after {
+            width: 38px;
+            height: 1px;
+            left: -11px;
+            top: 11px;
+        }
+
+        .leaflet-control-attribution {
+            color: #202124;
+            background: rgba(255, 255, 255, 0.94) !important;
+        }
+
+        .leaflet-control-attribution a {
+            color: #002fa7;
+        }
+    </style>
+</head>
+<body>
+<div id="map"></div>
+<div class="instruction">點一下或長按選擇位置</div>
+<script src="leaflet.js"></script>
+<script>
+    "use strict";
+
+    const map = L.map("map", {
+        zoomControl: true,
+        attributionControl: true,
+        minZoom: 2,
+        maxZoom: 19
+    });
+
+    let tileErrorReported = false;
+    const tiles = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        minZoom: 2,
+        maxZoom: 19,
+        updateWhenIdle: true,
+        updateWhenZooming: false,
+        keepBuffer: 1,
+        detectRetina: false,
+        attribution: "© OpenStreetMap contributors"
+    }).addTo(map);
+
+    tiles.on("tileerror", function () {
+        if (!tileErrorReported && window.AndroidMap) {
+            tileErrorReported = true;
+            window.AndroidMap.onTileError();
+        }
+    });
+
+    const selectionIcon = L.divIcon({
+        className: "",
+        html: '<div class="selection-marker"></div>',
+        iconSize: [24, 24],
+        iconAnchor: [12, 12]
+    });
+    let selectionMarker = null;
+
+    function selectLocation(latitude, longitude, notifyAndroid) {
+        const point = L.latLng(latitude, longitude);
+        if (selectionMarker === null) {
+            selectionMarker = L.marker(point, {
+                icon: selectionIcon,
+                interactive: false,
+                keyboard: false
+            }).addTo(map);
+        } else {
+            selectionMarker.setLatLng(point);
+        }
+        if (notifyAndroid && window.AndroidMap) {
+            window.AndroidMap.onCoordinateSelected(latitude, longitude);
+        }
+    }
+
+    map.on("click", function (event) {
+        selectLocation(event.latlng.lat, event.latlng.lng, true);
+    });
+    map.on("contextmenu", function (event) {
+        selectLocation(event.latlng.lat, event.latlng.lng, true);
+    });
+
+    window.setInitialLocation = function (latitude, longitude) {
+        const point = L.latLng(latitude, longitude);
+        map.setView(point, 16);
+        selectLocation(latitude, longitude, false);
+    };
+</script>
+</body>
+</html>
