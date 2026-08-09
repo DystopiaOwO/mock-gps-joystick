@@ -70,7 +70,7 @@ object RuntimeState {
 
     @Synchronized
     fun setSpeed(speedKmh: Double) {
-        if (speedKmh in listOf(1.0, 3.0, 5.0, 10.0)) {
+        if (speedKmh in listOf(1.0, 3.0, 5.0, 10.0, 15.0, 20.0)) {
             current = current.copy(speedKmh = speedKmh)
         }
     }

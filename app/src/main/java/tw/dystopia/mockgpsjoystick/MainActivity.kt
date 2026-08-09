@@ -29,7 +29,7 @@ import kotlin.math.max
 
 class MainActivity : Activity() {
     private val handler = Handler(Looper.getMainLooper())
-    private val speedValues = doubleArrayOf(1.0, 3.0, 5.0, 10.0)
+    private val speedValues = doubleArrayOf(1.0, 3.0, 5.0, 10.0, 15.0, 20.0)
     private var resumed = false
 
     private lateinit var latitudeInput: EditText

@@ -50,9 +50,11 @@ import java.io.ByteArrayInputStream
 import java.io.IOException
 import java.util.Locale
 import kotlin.math.atan2
+import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.math.sin
 
 class MockLocationService : Service() {
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -690,13 +692,13 @@ class MockLocationService : Service() {
         private const val NOTIFICATION_CHANNEL_ID = "mock_gps_status"
         private const val NOTIFICATION_ID = 1001
         private const val UPDATE_INTERVAL_MS = 500L
-        private const val ACCURACY_METERS = 5f
-        private const val EXPANDED_SIZE_DP = 128
+        private const val ACCURACY_METERS = 1f
+        private const val EXPANDED_SIZE_DP = 144
         private const val COLLAPSED_SIZE_DP = 40
         private const val PREFERENCES_NAME = "mock_gps_settings"
         private const val PREFERENCE_SPEED = "speed"
         private const val PREFERENCE_SAVED_PLACES = "saved_places"
-        private val ALLOWED_SPEEDS = doubleArrayOf(1.0, 3.0, 5.0, 10.0)
+        private val ALLOWED_SPEEDS = doubleArrayOf(1.0, 3.0, 5.0, 10.0, 15.0, 20.0)
         private const val MOCK_PERMISSION_ERROR =
             "Mock Location 啟動失敗。請到「開發人員選項」→「選取模擬位置應用程式」→ 選擇本 App。"
     }
@@ -1132,7 +1134,7 @@ private class JoystickOverlayView(
     private val onSavedLocations: () -> Unit,
     private val onCollapsedChanged: (Boolean) -> Unit,
 ) : View(context) {
-    private enum class TouchMode { NONE, JOYSTICK, DRAG, SPEED, MAP, SAVED, COLLAPSE }
+    private enum class TouchMode { NONE, JOYSTICK, DRAG, STRAIGHT, SPEED, MAP, SAVED, COLLAPSE }
 
     private val density = resources.displayMetrics.density
     private val scaledDensity = resources.displayMetrics.scaledDensity
@@ -1182,6 +1184,8 @@ private class JoystickOverlayView(
     private var knobX = 0f
     private var knobY = 0f
     private var speedKmh = initialSpeedKmh
+    private var straightMode = false
+    private var lastJoystickAngle = -90.0
 
     init {
         contentDescription = context.getString(R.string.overlay_description)
@@ -1199,21 +1203,26 @@ private class JoystickOverlayView(
         }
 
         val handleHeight = handleHeight()
-        drawSpeedControl(canvas, handleHeight)
-        drawMapControl(canvas, handleHeight)
-        drawSavedControl(canvas, handleHeight)
+        drawStraightControl(canvas)
+        drawSpeedControl(canvas)
+        drawMapControl(canvas)
+        drawSavedControl(canvas)
+        val dragY = dragHandleHeight() / 2f
+        canvas.drawLine(width / 2f - 12f * density, dragY, width / 2f + 12f * density, dragY, haloPaint)
+        canvas.drawLine(width / 2f - 12f * density, dragY, width / 2f + 12f * density, dragY, controlPaint)
+        val controlY = controlCenterY()
         canvas.drawLine(
-            width - 20f * density,
-            handleHeight / 2f,
-            width - 8f * density,
-            handleHeight / 2f,
+            width - 24f * density,
+            controlY,
+            width - 12f * density,
+            controlY,
             haloPaint,
         )
         canvas.drawLine(
-            width - 20f * density,
-            handleHeight / 2f,
-            width - 8f * density,
-            handleHeight / 2f,
+            width - 24f * density,
+            controlY,
+            width - 12f * density,
+            controlY,
             controlPaint,
         )
 
@@ -1226,6 +1235,9 @@ private class JoystickOverlayView(
         canvas.drawLine(centerX - radius, centerY, centerX + radius, centerY, linePaint)
         canvas.drawLine(centerX, centerY - radius, centerX, centerY + radius, linePaint)
         canvas.drawCircle(centerX, centerY, radius, linePaint)
+        val northY = centerY - radius + 12f * density
+        canvas.drawText("N", centerX, northY, speedHaloPaint)
+        canvas.drawText("N", centerX, northY, speedPaint)
         val drawKnobX = if (knobX == 0f) centerX else knobX
         val drawKnobY = if (knobY == 0f) centerY else knobY
         canvas.drawCircle(drawKnobX, drawKnobY, radius * 0.29f, accentPaint)
@@ -1242,10 +1254,12 @@ private class JoystickOverlayView(
                 moved = false
                 mode = when {
                     collapsed -> TouchMode.DRAG
+                    event.y <= dragHandleHeight() -> TouchMode.DRAG
                     event.y <= handleHeight() && event.x >= width - 28f * density -> TouchMode.COLLAPSE
                     event.y <= handleHeight() && event.x >= width - 56f * density -> TouchMode.SAVED
                     event.y <= handleHeight() && event.x >= width - 84f * density -> TouchMode.MAP
                     event.y <= handleHeight() && event.x >= width - 112f * density -> TouchMode.SPEED
+                    event.y <= handleHeight() && event.x >= width - 140f * density -> TouchMode.STRAIGHT
                     event.y <= handleHeight() -> TouchMode.DRAG
                     else -> TouchMode.JOYSTICK
                 }
@@ -1270,6 +1284,15 @@ private class JoystickOverlayView(
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 when (mode) {
                     TouchMode.JOYSTICK -> releaseJoystick()
+                    TouchMode.STRAIGHT -> if (!moved && event.actionMasked == MotionEvent.ACTION_UP) {
+                        straightMode = !straightMode
+                        if (straightMode) showStraightDirection() else {
+                            knobX = 0f
+                            knobY = 0f
+                        }
+                        onJoystick(lastJoystickAngle, if (straightMode) 1.0 else 0.0)
+                        invalidate()
+                    }
                     TouchMode.SPEED -> if (!moved && event.actionMasked == MotionEvent.ACTION_UP) {
                         speedKmh = onSpeedChange()
                         invalidate()
@@ -1309,15 +1332,27 @@ private class JoystickOverlayView(
         knobY = centerY + deltaY * scale
         val strength = (distance / radius).coerceIn(0f, 1f).toDouble()
         val angle = Math.toDegrees(atan2(deltaY.toDouble(), deltaX.toDouble()))
+        lastJoystickAngle = angle
         onJoystick(angle, strength)
         invalidate()
     }
 
     private fun releaseJoystick() {
-        knobX = 0f
-        knobY = 0f
-        onJoystick(-90.0, 0.0)
+        if (straightMode) showStraightDirection() else {
+            knobX = 0f
+            knobY = 0f
+        }
+        onJoystick(lastJoystickAngle, if (straightMode) 1.0 else 0.0)
         invalidate()
+    }
+
+    private fun showStraightDirection() {
+        val centerX = width / 2f
+        val centerY = handleHeight() + (height - handleHeight()) / 2f
+        val radius = min(width.toFloat(), height - handleHeight()) * 0.42f
+        val angle = Math.toRadians(lastJoystickAngle)
+        knobX = centerX + cos(angle).toFloat() * radius
+        knobY = centerY + sin(angle).toFloat() * radius
     }
 
     private fun setCollapsed(value: Boolean) {
@@ -1327,17 +1362,26 @@ private class JoystickOverlayView(
         invalidate()
     }
 
-    private fun drawSpeedControl(canvas: Canvas, handleHeight: Float) {
+    private fun drawSpeedControl(canvas: Canvas) {
         val label = speedKmh.toInt().toString()
-        val x = width - 98f * density
-        val y = handleHeight / 2f - (speedPaint.ascent() + speedPaint.descent()) / 2f
+        val x = width - 102f * density
+        val y = controlCenterY() - (speedPaint.ascent() + speedPaint.descent()) / 2f
         canvas.drawText(label, x, y, speedHaloPaint)
         canvas.drawText(label, x, y, speedPaint)
     }
 
-    private fun drawMapControl(canvas: Canvas, handleHeight: Float) {
-        val centerX = width - 70f * density
-        val centerY = handleHeight / 2f
+    private fun drawStraightControl(canvas: Canvas) {
+        val x = width - 130f * density
+        val y = controlCenterY()
+        if (straightMode) canvas.drawCircle(x, y, 10f * density, accentPaint)
+        val textY = y - (speedPaint.ascent() + speedPaint.descent()) / 2f
+        canvas.drawText("直", x, textY, speedHaloPaint)
+        canvas.drawText("直", x, textY, speedPaint)
+    }
+
+    private fun drawMapControl(canvas: Canvas) {
+        val centerX = width - 74f * density
+        val centerY = controlCenterY()
         val pin = android.graphics.Path().apply {
             moveTo(centerX, centerY + 8f * density)
             cubicTo(
@@ -1363,9 +1407,9 @@ private class JoystickOverlayView(
         canvas.drawCircle(centerX, centerY - 2f * density, 2f * density, controlPaint)
     }
 
-    private fun drawSavedControl(canvas: Canvas, handleHeight: Float) {
-        val centerX = width - 42f * density
-        val centerY = handleHeight / 2f
+    private fun drawSavedControl(canvas: Canvas) {
+        val centerX = width - 46f * density
+        val centerY = controlCenterY()
         val bookmark = android.graphics.Path().apply {
             moveTo(centerX - 5f * density, centerY - 7f * density)
             lineTo(centerX + 5f * density, centerY - 7f * density)
@@ -1378,5 +1422,9 @@ private class JoystickOverlayView(
         canvas.drawPath(bookmark, controlPaint)
     }
 
-    private fun handleHeight(): Float = 24f * density
+    private fun dragHandleHeight(): Float = 16f * density
+
+    private fun controlCenterY(): Float = dragHandleHeight() + 12f * density
+
+    private fun handleHeight(): Float = dragHandleHeight() + 24f * density
 }
