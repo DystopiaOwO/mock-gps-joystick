@@ -47,7 +47,7 @@
 若簽名檔不存在，Release 會立即停止並顯示：
 
 ```text
-缺少 release keystore，請先依 docs/build-apk.md 建立簽名檔。
+缺少 release keystore。本機請依 docs/build-apk.md 建立 keystore.properties；CI 請設定 MOCKGPS_KEYSTORE_FILE、MOCKGPS_STORE_PASSWORD、MOCKGPS_KEY_ALIAS 與 MOCKGPS_KEY_PASSWORD。
 ```
 
 這不影響 `assembleDebug` 或 `packageDebugApk`。`packageApks` 會強制先產生 Debug APK，再驗證並建置 Release：
@@ -70,7 +70,7 @@ Debug 與 Release 使用不同簽章，不能直接互相覆蓋。切換 variant
 
 `.github/workflows/release.yml` 在兩種情況下建置已簽章的 release APK：
 
-- 推送 `v*` tag（例如 `v0.2.0`）：檔名為 `MockGpsJoystick-vX.Y.Z.apk`（版本字串就是 tag），並上傳到該 tag 的 GitHub Release。
+- 推送符合 `v[0-9]*` 的 tag（例如 `v0.2.0`）：tag 須以 `v` 加一個數字開頭。檔名為 `MockGpsJoystick-vX.Y.Z.apk`（版本字串就是 tag），並上傳到該 tag 的 GitHub Release。
 - 手動 `workflow_dispatch`：只把 APK 上傳為 workflow artifact，不建立 GitHub Release。檔名使用 `versionName`，目前為 `MockGpsJoystick-v0.2.0.apk`。
 
 Workflow 會用 `apksigner verify --print-certs` 驗證簽章。手動試跑請用 Actions 的 Run workflow，這樣不會建立 Release。
