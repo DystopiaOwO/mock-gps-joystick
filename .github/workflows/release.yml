@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - "v*"
+    branches:
+      - "cursor/rib-216-signed-release-apk-544e"
   workflow_dispatch:
 
 permissions:
@@ -14,8 +16,17 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  register:
+    name: Register workflow
+    if: github.event_name == 'push' && github.ref_type == 'branch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Register for workflow_dispatch
+        run: echo "Workflow file is registered. Signed builds run on workflow_dispatch or v* tags."
+
   signed-release:
     name: Build signed release APK
+    if: github.event_name == 'workflow_dispatch' || github.ref_type == 'tag'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
