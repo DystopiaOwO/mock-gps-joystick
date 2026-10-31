@@ -1,3 +1,4 @@
+import java.io.File
 import java.util.Properties
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
@@ -14,9 +15,59 @@ val releaseProperties = Properties().apply {
 }
 val releaseKeys = listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
 val hasReleaseProperties = releaseKeys.all { !releaseProperties.getProperty(it).isNullOrBlank() }
-val releaseStoreFile = releaseProperties.getProperty("storeFile")
+val releaseStoreFileFromProperties = releaseProperties.getProperty("storeFile")
     ?.takeIf(String::isNotBlank)
     ?.let(rootProject::file)
+
+fun signingEnv(name: String): String? = System.getenv(name)?.takeIf { it.isNotBlank() }
+
+fun signingEnvKeystore(): File? {
+    val raw = signingEnv("MOCKGPS_KEYSTORE_FILE") ?: return null
+    val candidate = File(raw)
+    return if (candidate.isAbsolute) candidate else rootProject.file(raw)
+}
+
+val propertiesSigningReady =
+    releasePropertiesFile.isFile &&
+        hasReleaseProperties &&
+        releaseStoreFileFromProperties?.isFile == true
+val envKeystoreFile = signingEnvKeystore()
+val envStorePassword = signingEnv("MOCKGPS_STORE_PASSWORD")
+val envKeyAlias = signingEnv("MOCKGPS_KEY_ALIAS")
+val envKeyPassword = signingEnv("MOCKGPS_KEY_PASSWORD")
+// keystore.properties wins when it exists. Environment variables are the CI fallback.
+val envSigningReady =
+    !releasePropertiesFile.isFile &&
+        envKeystoreFile?.isFile == true &&
+        envStorePassword != null &&
+        envKeyAlias != null &&
+        envKeyPassword != null
+
+val releaseStoreFile: File? = when {
+    propertiesSigningReady -> releaseStoreFileFromProperties
+    envSigningReady -> envKeystoreFile
+    else -> null
+}
+val releaseStorePassword: String? = when {
+    propertiesSigningReady -> releaseProperties.getProperty("storePassword")
+    envSigningReady -> envStorePassword
+    else -> null
+}
+val releaseKeyAlias: String? = when {
+    propertiesSigningReady -> releaseProperties.getProperty("keyAlias")
+    envSigningReady -> envKeyAlias
+    else -> null
+}
+val releaseKeyPassword: String? = when {
+    propertiesSigningReady -> releaseProperties.getProperty("keyPassword")
+    envSigningReady -> envKeyPassword
+    else -> null
+}
+val hasReleaseSigning =
+    releaseStoreFile != null &&
+        !releaseStorePassword.isNullOrBlank() &&
+        !releaseKeyAlias.isNullOrBlank() &&
+        !releaseKeyPassword.isNullOrBlank()
 
 android {
     namespace = "tw.dystopia.mockgpsjoystick"
@@ -31,12 +82,17 @@ android {
     }
 
     signingConfigs {
-        if (releasePropertiesFile.isFile && hasReleaseProperties && releaseStoreFile?.isFile == true) {
+        if (hasReleaseSigning) {
+            val store = releaseStoreFile
+            val storePass = releaseStorePassword
+            val alias = releaseKeyAlias
+            val keyPass = releaseKeyPassword
+            check(store != null && storePass != null && alias != null && keyPass != null)
             create("release") {
-                storeFile = releaseStoreFile
-                storePassword = releaseProperties.getProperty("storePassword")
-                keyAlias = releaseProperties.getProperty("keyAlias")
-                keyPassword = releaseProperties.getProperty("keyPassword")
+                storeFile = store
+                storePassword = storePass
+                keyAlias = alias
+                keyPassword = keyPass
             }
         }
     }
@@ -74,10 +130,13 @@ kotlin {
 
 val validateReleaseSigning by tasks.registering {
     group = "verification"
-    description = "Checks local release signing files without affecting debug builds."
+    description = "Checks release signing material without affecting debug builds."
     doLast {
-        if (!releasePropertiesFile.isFile || !hasReleaseProperties || releaseStoreFile?.isFile != true) {
-            throw GradleException("缺少 release keystore，請先依 docs/build-apk.md 建立簽名檔。")
+        if (!hasReleaseSigning) {
+            throw GradleException(
+                "缺少 release keystore。本機請依 docs/build-apk.md 建立 keystore.properties；" +
+                    "CI 請設定 MOCKGPS_KEYSTORE_FILE、MOCKGPS_STORE_PASSWORD、MOCKGPS_KEY_ALIAS 與 MOCKGPS_KEY_PASSWORD。",
+            )
         }
     }
 }
